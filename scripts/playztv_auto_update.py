@@ -316,21 +316,159 @@ def fetch_app_config(api_url):
     return obj
 
 def fetch_events(api_url):
-    print("[3/7] Fetching events.txt...")
-    text = fetch_and_decrypt(api_url, "events.txt", decrypt_other)
-    arr = json.loads(text)
+    """
+    Diagnostic-only event fetcher.
+
+    This does not change the repository's decryption logic.
+    It reports whether the events endpoint is reachable and whether
+    the existing decrypt/JSON pipeline is producing usable data.
+    """
+
+    print("\n" + "=" * 65)
+    print("EVENT FETCH DIAGNOSTICS")
+    print("=" * 65)
+
+    if not api_url:
+        raise RuntimeError("API URL is empty")
+
+    events_url = api_url.rstrip("/") + "/events.txt"
+
+    print(f"API base URL: {api_url}")
+    print(f"Events URL:   {events_url}")
+
+    # Use the repository's existing HTTP helper if available.
+    try:
+        response = urllib.request.urlopen(
+            urllib.request.Request(
+                events_url,
+                headers={
+                    "User-Agent": get_random_ua(),
+                    "Accept": "*/*",
+                },
+            ),
+            timeout=20,
+            context=SSL_CTX,
+        )
+
+        raw = response.read()
+
+        print(f"HTTP status:  {response.status}")
+        print(f"Content-Type: {response.headers.get('Content-Type', '?')}")
+        print(f"Bytes:        {len(raw)}")
+
+        # Do NOT print the complete response because it may contain
+        # configuration or stream-related data.
+        print(f"Response prefix: {raw[:120]!r}")
+
+    except urllib.error.HTTPError as e:
+        print(f"HTTP ERROR: {e.code} {e.reason}")
+        raise
+
+    except urllib.error.URLError as e:
+        print(f"URL ERROR: {e.reason}")
+        raise
+
+    except Exception as e:
+        print(f"REQUEST ERROR: {type(e).__name__}: {e}")
+        raise
+
+    # Pass the response through the repository's existing decryptor.
+    try:
+        raw_text = raw.decode("utf-8", errors="replace")
+        decrypted = decrypt_other(raw_text)
+
+        print("\nExisting decrypt_other(): SUCCESS")
+        print(f"Decrypted length: {len(decrypted)}")
+        print(f"Decrypted prefix: {decrypted[:200]!r}")
+
+    except Exception as e:
+        print("\nExisting decrypt_other(): FAILED")
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error: {e}")
+        print("=" * 65)
+        raise
+
+    # Parse JSON using the existing expected structure.
+    try:
+        data = json.loads(decrypted)
+
+        print("\nJSON parsing: SUCCESS")
+        print(f"Top-level type: {type(data).__name__}")
+
+        if isinstance(data, list):
+            print(f"Top-level items: {len(data)}")
+        elif isinstance(data, dict):
+            print(f"Top-level keys: {list(data.keys())[:20]}")
+
+    except Exception as e:
+        print("\nJSON parsing: FAILED")
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error: {e}")
+        print(f"Decrypted prefix: {decrypted[:500]!r}")
+        print("=" * 65)
+        raise
+
+    # Preserve the repository's existing event structure.
+    if not isinstance(data, list):
+        raise RuntimeError(
+            f"Expected a list of events, got {type(data).__name__}"
+        )
+
     events = []
-    for item in arr:
+    failures = 0
+
+    for index, item in enumerate(data):
         try:
-            inner = json.loads(item['event'])
-            events.append(inner)
-        except: continue
-    if not events:
-        print('      ! No events parsed (empty or decryption failure)')
-    visible = [e for e in events if e.get('visible', True)]
-    print(f"      ✓ Total: {len(events)}, Visible: {len(visible)}")
-    visible.sort(key=lambda e: parse_event_date(e.get('date',''), e.get('time','')) or datetime.max.replace(tzinfo=BD_TZ))
-    return visible
+            if not isinstance(item, dict):
+                raise TypeError(
+                    f"Expected object, got {type(item).__name__}"
+                )
+
+            # Existing repository format.
+            if "event" in item:
+                event = json.loads(item["event"])
+            else:
+                event = item
+
+            if not isinstance(event, dict):
+                raise TypeError(
+                    f"Decoded event is {type(event).__name__}"
+                )
+
+            events.append(event)
+
+        except Exception as e:
+            failures += 1
+
+            if failures <= 10:
+                print(
+                    f"Event {index} parse failure: "
+                    f"{type(e).__name__}: {e}"
+                )
+
+    print("\nEvent parsing:")
+    print(f"  Successfully parsed: {len(events)}")
+    print(f"  Failed:              {failures}")
+
+    if events:
+        print("\nSample events:")
+
+        for event in events[:5]:
+            print(
+                "  - "
+                f"{event.get('eventName', '?')} | "
+                f"{event.get('teamAName', '?')} vs "
+                f"{event.get('teamBName', '?')}"
+            )
+
+    print("=" * 65)
+    print("EVENT FETCH DIAGNOSTICS COMPLETE")
+    print("=" * 65)
+
+    return events
+
+
+
 
 def fetch_event_streams(api_url, event):
     links_path = event.get('links', '')
