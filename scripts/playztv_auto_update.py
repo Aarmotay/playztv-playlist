@@ -131,25 +131,101 @@ def decrypt_app_txt(raw):
     return aes_decrypt(data, KEY2, IV2).decode('utf-8')
 
 def decrypt_other(raw):
-    """events.txt / categories.txt / sports.txt / link files:
-       char-substitute + base64 + base64 + AES Key1/IV1.
-       Falls back to decrypt_app_txt format if old format fails."""
-    # Try original format
+    """
+    Diagnostic version of the existing events/categories/link-file decryptor.
+
+    Tries the repository's two existing decryption formats and reports
+    exactly which one succeeds or fails. It does NOT silently convert
+    failures into an empty [] dataset.
+    """
+
+    if raw is None:
+        raise ValueError("decrypt_other received None")
+
+    raw = raw.strip()
+
+    print("\n--- decrypt_other diagnostics ---")
+    print(f"Raw type: {type(raw).__name__}")
+    print(f"Raw length: {len(raw)}")
+    print(f"Raw prefix: {raw[:80]!r}")
+
+    # ============================================================
+    # FORMAT 1
+    # Character substitution -> Base64 -> Base64 -> AES
+    # ============================================================
     try:
+        print("\nTrying decryption format 1...")
+
         step1 = m8614b(raw)
-        step1_text = step1.decode('utf-8')
-        step2 = base64.b64decode(step1_text)
-        return aes_decrypt(step2, KEY1, IV1).decode('utf-8')
-    except (UnicodeDecodeError, Exception):
-        pass
-    # Fallback: try app.txt-style format (direct base64 + AES Key2/IV2)
+
+        print(f"Format 1 / step 1 bytes: {len(step1)}")
+        print(f"Format 1 / step 1 prefix: {step1[:80]!r}")
+
+        step1_text = step1.decode("utf-8")
+
+        step2 = base64.b64decode(
+            step1_text,
+            validate=True
+        )
+
+        print(f"Format 1 / step 2 bytes: {len(step2)}")
+
+        decrypted = aes_decrypt(
+            step2,
+            KEY1,
+            IV1
+        )
+
+        result = decrypted.decode("utf-8")
+
+        print("Format 1 SUCCESS")
+        print(f"Decrypted length: {len(result)}")
+        print(f"Decrypted prefix: {result[:200]!r}")
+        print("--- end diagnostics ---\n")
+
+        return result
+
+    except Exception as e:
+        print(
+            "Format 1 FAILED: "
+            f"{type(e).__name__}: {e}"
+        )
+
+    # ============================================================
+    # FORMAT 2
+    # Direct Base64 -> AES
+    # ============================================================
     try:
-        return decrypt_app_txt(raw)
-    except Exception:
-        pass
-    # Final fallback: return empty JSON array
-    print('      ! Decryption failed — server format may have changed')
-    return '[]'
+        print("\nTrying decryption format 2...")
+
+        result = decrypt_app_txt(raw)
+
+        print("Format 2 SUCCESS")
+        print(f"Decrypted length: {len(result)}")
+        print(f"Decrypted prefix: {result[:200]!r}")
+        print("--- end diagnostics ---\n")
+
+        return result
+
+    except Exception as e:
+        print(
+            "Format 2 FAILED: "
+            f"{type(e).__name__}: {e}"
+        )
+
+    # ============================================================
+    # BOTH FAILED
+    # ============================================================
+    print("\nBOTH DECRYPTION FORMATS FAILED")
+    print(
+        "The server response could not be decrypted using "
+        "either existing format."
+    )
+    print("--- end diagnostics ---\n")
+
+    raise RuntimeError(
+        "Unable to decrypt response using either supported format"
+                                       )
 
 def fetch_and_decrypt(api_url, path, decryptor):
     raw = http_get(api_url + path).decode('utf-8').strip()
