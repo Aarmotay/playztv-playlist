@@ -424,18 +424,30 @@ def verify_stream(full_url):
         return ok, msg, base_url, headers
 
 def verify_streams_parallel(streams, max_workers=8, timeout_per=10):
-    """Verify a list of streams in parallel. Returns list of (stream, ok, message)."""
-    results = []
+    """Verify streams in parallel while preserving original order."""
+    results = [None] * len(streams)
+
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        future_to_stream = {ex.submit(verify_stream, s['link']): s for s in streams if s.get('link')}
-        for future in as_completed(future_to_stream):
-            stream = future_to_stream[future]
+        future_to_index = {}
+
+        for index, stream in enumerate(streams):
+            if stream.get('link'):
+                future = ex.submit(verify_stream, stream['link'])
+                future_to_index[future] = index
+
+        for future in as_completed(future_to_index):
+            index = future_to_index[future]
+            stream = streams[index]
+
             try:
                 ok, msg, _, _ = future.result(timeout=timeout_per + 5)
             except Exception as e:
-                ok, msg = False, f"verify exception: {str(e)[:50]}"
-            results.append((stream, ok, msg))
-    return results
+                ok = False
+                msg = f"verify exception: {str(e)[:50]}"
+
+            results[index] = (stream, ok, msg)
+
+    return [r for r in results if r is not None]
 
 # ============== MAIN PIPELINE ==============
 def get_live_api_url():
