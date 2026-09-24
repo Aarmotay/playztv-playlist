@@ -212,20 +212,165 @@ def decrypt_other(raw):
             "Format 2 FAILED: "
             f"{type(e).__name__}: {e}"
         )
+def decrypt_other(raw):
+    """
+    Decrypt events.txt, categories.txt, sports.txt, and per-event link files.
+
+    Matches PlayZTV's current Kotlin PlayZTVCryptoUtils implementation:
+
+      1. If already JSON/XML, return it unchanged.
+      2. Primary:
+           substitution decode
+           -> Base64 decode
+           -> UTF-8 string
+           -> Base64 decode
+           -> AES-CBC PKCS5/PKCS7 using KEY1/IV1
+      3. Fallback:
+           Base64 decode
+           -> AES-CBC PKCS5/PKCS7 using KEY2/IV2
+
+    Raises an exception if neither format works instead of silently
+    returning [].
+    """
+
+    if raw is None:
+        raise ValueError("decrypt_other received None")
+
+    raw = raw.strip()
+
+    if not raw:
+        raise ValueError("decrypt_other received an empty response")
+
+    # Kotlin:
+    # if (raw.startsWith("{") || raw.startsWith("[") || raw.startsWith("<"))
+    #     return raw
+    if raw.startswith(("{", "[", "<")):
+        return raw
+
+    # Kotlin removes whitespace before attempting the encrypted formats.
+    normalized_raw = ''.join(raw.split())
+
+    # ============================================================
+    # PRIMARY FORMAT
+    #
+    # Kotlin:
+    #
+    # decodeSubstitutionPayload(raw)
+    #   -> substitution reverse
+    #   -> Base64.decode(...)
+    #   -> UTF-8 String
+    #
+    # decryptAes(primaryPayload, PRIMARY_KEY)
+    #   -> Base64.decode(...)
+    #   -> AES/CBC/PKCS5Padding
+    # ============================================================
+    primary_error = None
+
+    try:
+        # Same substitution performed by Kotlin's SUB_REVERSE.
+        restored = ''.join(
+            INV_MAP.get(char, char)
+            for char in normalized_raw
+        )
+
+        # Kotlin's normalizeBase64():
+        #   "-" -> "+"
+        #   "_" -> "/"
+        #   whitespace removed
+        #   "=" padding added
+        restored = (
+            restored
+            .replace("-", "+")
+            .replace("_", "/")
+        )
+
+        while len(restored) % 4 != 0:
+            restored += "="
+
+        # First Base64 decode.
+        primary_payload_bytes = base64.b64decode(
+            restored,
+            validate=False
+        )
+
+        # Kotlin converts this intermediate value to UTF-8.
+        primary_payload = primary_payload_bytes.decode("utf-8")
+
+        # Kotlin decryptAes() Base64-decodes the resulting string again.
+        while len(primary_payload) % 4 != 0:
+            primary_payload += "="
+
+        ciphertext = base64.b64decode(
+            primary_payload,
+            validate=False
+        )
+
+        # KEY1/IV1 correspond to PRIMARY_KEY/PRIMARY_IV.
+        decrypted = aes_decrypt(
+            ciphertext,
+            KEY1,
+            IV1
+        )
+
+        result = decrypted.decode("utf-8").strip()
+
+        if not result:
+            raise ValueError("Primary AES produced an empty result")
+
+        return result
+
+    except Exception as e:
+        primary_error = e
+
+    # ============================================================
+    # FALLBACK FORMAT
+    #
+    # Kotlin:
+    #
+    # decryptAes(raw, FALLBACK_KEY)
+    #   -> Base64.decode(raw)
+    #   -> AES/CBC/PKCS5Padding
+    # ============================================================
+    fallback_error = None
+
+    try:
+        fallback_payload = normalized_raw
+
+        while len(fallback_payload) % 4 != 0:
+            fallback_payload += "="
+
+        ciphertext = base64.b64decode(
+            fallback_payload,
+            validate=False
+        )
+
+        # KEY2/IV2 correspond to FALLBACK_KEY/FALLBACK_IV.
+        decrypted = aes_decrypt(
+            ciphertext,
+            KEY2,
+            IV2
+        )
+
+        result = decrypted.decode("utf-8").strip()
+
+        if not result:
+            raise ValueError("Fallback AES produced an empty result")
+
+        return result
+
+    except Exception as e:
+        fallback_error = e
 
     # ============================================================
     # BOTH FAILED
     # ============================================================
-    print("\nBOTH DECRYPTION FORMATS FAILED")
-    print(
-        "The server response could not be decrypted using "
-        "either existing format."
-    )
-    print("--- end diagnostics ---\n")
-
     raise RuntimeError(
-        "Unable to decrypt response using either supported format"
-                                       )
+        "Unable to decrypt PlayZTV response. "
+        f"Primary format failed with "
+        f"{type(primary_error).__name__}: {primary_error}; "
+        f"fallback format failed with "
+        f"{type(fallback_error).__name__}: {fallback_error}"
+              )
 
 def fetch_and_decrypt(api_url, path, decryptor):
     raw = http_get(api_url + path).decode('utf-8').strip()
