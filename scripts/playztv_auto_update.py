@@ -237,7 +237,67 @@ def decrypt_other(raw):
             "DEBUG first 64 bytes:",
             primary_payload_bytes[:64]
         )
+                print("DEBUG trying KEY1 directly...")
 
+        try:
+            direct = aes_decrypt(
+                primary_payload_bytes,
+                KEY1,
+                IV1
+            )
+
+            print(
+                "DEBUG KEY1 direct result length:",
+                len(direct)
+            )
+
+            print(
+                "DEBUG KEY1 direct prefix:",
+                direct[:200]
+            )
+
+            print(
+                "DEBUG KEY1 direct UTF8:",
+                direct[:500].decode("utf-8")
+            )
+
+        except Exception as e:
+            print(
+                "DEBUG KEY1 direct FAILED:",
+                type(e).__name__,
+                e
+            )
+
+        print("DEBUG trying KEY2 directly...")
+
+        try:
+            direct = aes_decrypt(
+                primary_payload_bytes,
+                KEY2,
+                IV2
+            )
+
+            print(
+                "DEBUG KEY2 direct result length:",
+                len(direct)
+            )
+
+            print(
+                "DEBUG KEY2 direct prefix:",
+                direct[:200]
+            )
+
+            print(
+                "DEBUG KEY2 direct UTF8:",
+                direct[:500].decode("utf-8")
+            )
+
+        except Exception as e:
+            print(
+                "DEBUG KEY2 direct FAILED:",
+                type(e).__name__,
+                e
+            )
         # ===== END DIAGNOSTICS =====
 
         # Kotlin converts this intermediate value to UTF-8.
