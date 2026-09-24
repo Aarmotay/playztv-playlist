@@ -212,6 +212,9 @@ def decrypt_other(raw):
             validate=False
         )
 
+      primary_payload = primary_payload_bytes.decode("utf-8", errors="replace")
+print("DEBUG primary intermediate:", repr(primary_payload[:200]))
+
         # Kotlin converts this intermediate value to UTF-8.
         primary_payload = primary_payload_bytes.decode("utf-8")
 
