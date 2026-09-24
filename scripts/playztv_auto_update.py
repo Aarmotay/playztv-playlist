@@ -206,22 +206,39 @@ def decrypt_other(raw):
         while len(restored) % 4 != 0:
             restored += "="
 
-                # First Base64 decode.
+                       # First Base64 decode.
         primary_payload_bytes = base64.b64decode(
             restored,
             validate=False
         )
 
-        # Diagnostic output.
-        print("DEBUG primary decoded length:", len(primary_payload_bytes))
+        # ===== DIAGNOSTICS =====
         print(
-            "DEBUG primary decoded first 64 bytes:",
+            "DEBUG primary decoded length:",
+            len(primary_payload_bytes)
+        )
+
+        print(
+            "DEBUG length mod 16:",
+            len(primary_payload_bytes) % 16
+        )
+
+        print(
+            "DEBUG length mod 8:",
+            len(primary_payload_bytes) % 8
+        )
+
+        print(
+            "DEBUG first 16 hex:",
+            primary_payload_bytes[:16].hex()
+        )
+
+        print(
+            "DEBUG first 64 bytes:",
             primary_payload_bytes[:64]
         )
-        print(
-            "DEBUG primary decoded hex:",
-            primary_payload_bytes[:32].hex()
-        )
+
+        # ===== END DIAGNOSTICS =====
 
         # Kotlin converts this intermediate value to UTF-8.
         primary_payload = primary_payload_bytes.decode("utf-8")
