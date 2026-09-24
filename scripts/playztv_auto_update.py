@@ -237,7 +237,7 @@ def decrypt_other(raw):
             "DEBUG first 64 bytes:",
             primary_payload_bytes[:64]
         )
-                print("DEBUG trying KEY1 directly...")
+        print("DEBUG trying KEY1 directly...")
 
         try:
             direct = aes_decrypt(
