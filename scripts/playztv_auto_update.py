@@ -370,17 +370,243 @@ def decrypt_other(raw):
 
     except Exception as e:
         fallback_error = e
+def decrypt_other(raw):
+    """
+    Decrypt events.txt, categories.txt, sports.txt, and per-event link files.
+
+    Matches PlayZTV's current Kotlin PlayZTVCryptoUtils implementation.
+
+    Primary:
+        substitution decode
+        -> Base64 decode
+        -> UTF-8 string
+        -> Base64 decode
+        -> AES-CBC using KEY1/IV1
+
+    Fallback:
+        Base64 decode
+        -> AES-CBC using KEY2/IV2
+    """
+
+    if raw is None:
+        raise ValueError("decrypt_other received None")
+
+    raw = raw.strip()
+
+    if not raw:
+        raise ValueError("decrypt_other received an empty response")
+
+    # Already plaintext JSON/XML
+    if raw.startswith(("{", "[", "<")):
+        return raw
+
+    # Remove whitespace, matching Kotlin behavior.
+    normalized_raw = ''.join(raw.split())
+
+    # ============================================================
+    # PRIMARY FORMAT
+    # ============================================================
+
+    primary_error = None
+
+    try:
+        # Reverse the character substitution.
+        restored = ''.join(
+            INV_MAP.get(char, char)
+            for char in normalized_raw
+        )
+
+        # Normalize Base64.
+        restored = (
+            restored
+            .replace("-", "+")
+            .replace("_", "/")
+        )
+
+        while len(restored) % 4 != 0:
+            restored += "="
+
+        # First Base64 decode.
+        primary_payload_bytes = base64.b64decode(
+            restored,
+            validate=False
+        )
+
+        # ===== DIAGNOSTICS =====
+        print(
+            "DEBUG primary decoded length:",
+            len(primary_payload_bytes)
+        )
+
+        print(
+            "DEBUG length mod 16:",
+            len(primary_payload_bytes) % 16
+        )
+
+        print(
+            "DEBUG length mod 8:",
+            len(primary_payload_bytes) % 8
+        )
+
+        print(
+            "DEBUG first 16 hex:",
+            primary_payload_bytes[:16].hex()
+        )
+
+        print(
+            "DEBUG first 64 bytes:",
+            primary_payload_bytes[:64]
+        )
+
+        # Test whether the first decoded layer is already
+        # AES ciphertext.
+        print("DEBUG trying KEY1 directly...")
+
+        try:
+            direct = aes_decrypt(
+                primary_payload_bytes,
+                KEY1,
+                IV1
+            )
+
+            print(
+                "DEBUG KEY1 direct result length:",
+                len(direct)
+            )
+
+            print(
+                "DEBUG KEY1 direct prefix:",
+                direct[:200]
+            )
+
+            print(
+                "DEBUG KEY1 direct UTF8:",
+                direct[:500].decode("utf-8")
+            )
+
+        except Exception as e:
+            print(
+                "DEBUG KEY1 direct FAILED:",
+                type(e).__name__,
+                e
+            )
+
+        print("DEBUG trying KEY2 directly...")
+
+        try:
+            direct = aes_decrypt(
+                primary_payload_bytes,
+                KEY2,
+                IV2
+            )
+
+            print(
+                "DEBUG KEY2 direct result length:",
+                len(direct)
+            )
+
+            print(
+                "DEBUG KEY2 direct prefix:",
+                direct[:200]
+            )
+
+            print(
+                "DEBUG KEY2 direct UTF8:",
+                direct[:500].decode("utf-8")
+            )
+
+        except Exception as e:
+            print(
+                "DEBUG KEY2 direct FAILED:",
+                type(e).__name__,
+                e
+            )
+
+        # ===== END DIAGNOSTICS =====
+
+        # Original Kotlin format expects the first decoded
+        # layer to be a UTF-8 Base64 string.
+        primary_payload = primary_payload_bytes.decode("utf-8")
+
+        print(
+            "DEBUG primary intermediate:",
+            repr(primary_payload[:200])
+        )
+
+        while len(primary_payload) % 4 != 0:
+            primary_payload += "="
+
+        ciphertext = base64.b64decode(
+            primary_payload,
+            validate=False
+        )
+
+        # Decrypt using primary key.
+        decrypted = aes_decrypt(
+            ciphertext,
+            KEY1,
+            IV1
+        )
+
+        result = decrypted.decode("utf-8").strip()
+
+        if not result:
+            raise ValueError(
+                "Primary AES produced an empty result"
+            )
+
+        return result
+
+    except Exception as e:
+        primary_error = e
+
+    # ============================================================
+    # FALLBACK FORMAT
+    # ============================================================
+
+    fallback_error = None
+
+    try:
+        fallback_payload = normalized_raw
+
+        while len(fallback_payload) % 4 != 0:
+            fallback_payload += "="
+
+        ciphertext = base64.b64decode(
+            fallback_payload,
+            validate=False
+        )
+
+        # Decrypt using fallback key.
+        decrypted = aes_decrypt(
+            ciphertext,
+            KEY2,
+            IV2
+        )
+
+        result = decrypted.decode("utf-8").strip()
+
+        if not result:
+            raise ValueError(
+                "Fallback AES produced an empty result"
+            )
+
+        return result
+
+    except Exception as e:
+        fallback_error = e
 
     # ============================================================
     # BOTH FAILED
     # ============================================================
+
     raise RuntimeError(
         "Unable to decrypt PlayZTV response. "
         f"Primary format failed with "
         f"{type(primary_error).__name__}: {primary_error}; "
         f"fallback format failed with "
         f"{type(fallback_error).__name__}: {fallback_error}"
-              )
+  )
 
 def fetch_and_decrypt(api_url, path, decryptor):
     raw = http_get(api_url + path).decode('utf-8').strip()
