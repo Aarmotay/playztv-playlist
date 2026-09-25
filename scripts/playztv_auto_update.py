@@ -298,7 +298,10 @@ def decrypt_other(raw):
                 type(e).__name__,
                 e
             )
-          # After substitution + FIRST Base64 decode:
+
+
+          
+  # After substitution + FIRST Base64 decode:
             print("decoded bytes:", len(decoded))
             print("block aligned:", len(decoded) % 16 == 0)
             print("first 64 hex:", decoded[:64].hex())
