@@ -524,14 +524,184 @@ def decrypt_other(raw):
             )
 
             print(
+def decrypt_other(raw):
+    """
+    Decrypt events.txt, categories.txt, sports.txt, and per-event files.
+
+    Primary format:
+        substitution
+        -> Base64 decode
+        -> inspect intermediate bytes
+        -> UTF-8
+        -> Base64 decode
+        -> AES-CBC
+
+    Fallback:
+        Base64 decode
+        -> AES-CBC
+    """
+
+    if raw is None:
+        raise ValueError("decrypt_other received None")
+
+    raw = raw.strip()
+
+    if not raw:
+        raise ValueError("decrypt_other received an empty response")
+
+    # Already plaintext JSON/XML.
+    if raw.startswith(("{", "[", "<")):
+        return raw
+
+    normalized_raw = ''.join(raw.split())
+
+    # ============================================================
+    # PRIMARY FORMAT
+    # ============================================================
+
+    primary_error = None
+
+    try:
+        # Reverse PlayZTV substitution.
+        restored = ''.join(
+            INV_MAP.get(char, char)
+            for char in normalized_raw
+        )
+
+        # Normalize Base64.
+        restored = (
+            restored
+            .replace("-", "+")
+            .replace("_", "/")
+        )
+
+        while len(restored) % 4 != 0:
+            restored += "="
+
+        # --------------------------------------------------------
+        # FIRST BASE64 DECODE
+        # --------------------------------------------------------
+
+        primary_payload_bytes = base64.b64decode(
+            restored,
+            validate=False
+        )
+
+        print("\n===== PLAYZTV CRYPTO DIAGNOSTICS =====")
+
+        print(
+            "DEBUG primary decoded length:",
+            len(primary_payload_bytes)
+        )
+
+        print(
+            "DEBUG length mod 16:",
+            len(primary_payload_bytes) % 16
+        )
+
+        print(
+            "DEBUG length mod 8:",
+            len(primary_payload_bytes) % 8
+        )
+
+        print(
+            "DEBUG first 16 hex:",
+            primary_payload_bytes[:16].hex()
+        )
+
+        print(
+            "DEBUG first 64 bytes:",
+            primary_payload_bytes[:64]
+        )
+
+        # --------------------------------------------------------
+        # PRINTABLE-BYTE ANALYSIS
+        # --------------------------------------------------------
+
+        ascii_count = sum(
+            32 <= b <= 126 or b in (9, 10, 13)
+            for b in primary_payload_bytes
+        )
+
+        printable_ratio = (
+            ascii_count / max(1, len(primary_payload_bytes))
+        )
+
+        print(
+            "DEBUG printable ratio:",
+            round(printable_ratio, 4)
+        )
+
+        # --------------------------------------------------------
+        # TEST WHETHER FIRST DECODED LAYER IS ALREADY AES DATA
+        # --------------------------------------------------------
+
+        print("DEBUG trying KEY1 directly...")
+
+        try:
+            direct = aes_decrypt(
+                primary_payload_bytes,
+                KEY1,
+                IV1
+            )
+
+            print(
+                "DEBUG KEY1 direct result length:",
+                len(direct)
+            )
+
+            print(
+                "DEBUG KEY1 direct prefix:",
+                direct[:200]
+            )
+
+            try:
+                print(
+                    "DEBUG KEY1 direct UTF8:",
+                    direct[:500].decode("utf-8")
+                )
+            except UnicodeDecodeError as e:
+                print(
+                    "DEBUG KEY1 direct UTF8 FAILED:",
+                    e
+                )
+
+        except Exception as e:
+            print(
+                "DEBUG KEY1 direct FAILED:",
+                type(e).__name__,
+                e
+            )
+
+        print("DEBUG trying KEY2 directly...")
+
+        try:
+            direct = aes_decrypt(
+                primary_payload_bytes,
+                KEY2,
+                IV2
+            )
+
+            print(
+                "DEBUG KEY2 direct result length:",
+                len(direct)
+            )
+
+            print(
                 "DEBUG KEY2 direct prefix:",
                 direct[:200]
             )
 
-            print(
-                "DEBUG KEY2 direct UTF8:",
-                direct[:500].decode("utf-8")
-            )
+            try:
+                print(
+                    "DEBUG KEY2 direct UTF8:",
+                    direct[:500].decode("utf-8")
+                )
+            except UnicodeDecodeError as e:
+                print(
+                    "DEBUG KEY2 direct UTF8 FAILED:",
+                    e
+                )
 
         except Exception as e:
             print(
@@ -540,16 +710,37 @@ def decrypt_other(raw):
                 e
             )
 
-        # ===== END DIAGNOSTICS =====
+        # --------------------------------------------------------
+        # CHECK WHETHER INTERMEDIATE DATA IS UTF-8
+        # --------------------------------------------------------
 
-        # Original Kotlin format expects the first decoded
-        # layer to be a UTF-8 Base64 string.
-        primary_payload = primary_payload_bytes.decode("utf-8")
+        try:
+            primary_payload = primary_payload_bytes.decode("utf-8")
 
-        print(
-            "DEBUG primary intermediate:",
-            repr(primary_payload[:200])
-        )
+            print(
+                "DEBUG intermediate UTF8: SUCCESS"
+            )
+
+            print(
+                "DEBUG primary intermediate:",
+                repr(primary_payload[:200])
+            )
+
+        except UnicodeDecodeError as e:
+            print(
+                "DEBUG intermediate UTF8: FAILED"
+            )
+
+            print(
+                "DEBUG intermediate UTF8 error:",
+                e
+            )
+
+            raise
+
+        # --------------------------------------------------------
+        # SECOND BASE64 DECODE
+        # --------------------------------------------------------
 
         while len(primary_payload) % 4 != 0:
             primary_payload += "="
@@ -559,7 +750,20 @@ def decrypt_other(raw):
             validate=False
         )
 
-        # Decrypt using primary key.
+        print(
+            "DEBUG second Base64 decoded length:",
+            len(ciphertext)
+        )
+
+        print(
+            "DEBUG second Base64 length mod 16:",
+            len(ciphertext) % 16
+        )
+
+        # --------------------------------------------------------
+        # AES
+        # --------------------------------------------------------
+
         decrypted = aes_decrypt(
             ciphertext,
             KEY1,
@@ -568,15 +772,28 @@ def decrypt_other(raw):
 
         result = decrypted.decode("utf-8").strip()
 
+        print(
+            "DEBUG primary AES plaintext prefix:",
+            repr(result[:300])
+        )
+
         if not result:
             raise ValueError(
                 "Primary AES produced an empty result"
             )
 
+        print("===== PRIMARY FORMAT SUCCEEDED =====\n")
+
         return result
 
     except Exception as e:
         primary_error = e
+
+        print(
+            "DEBUG primary format FAILED:",
+            type(e).__name__,
+            e
+        )
 
     # ============================================================
     # FALLBACK FORMAT
@@ -595,7 +812,16 @@ def decrypt_other(raw):
             validate=False
         )
 
-        # Decrypt using fallback key.
+        print(
+            "DEBUG fallback ciphertext length:",
+            len(ciphertext)
+        )
+
+        print(
+            "DEBUG fallback length mod 16:",
+            len(ciphertext) % 16
+        )
+
         decrypted = aes_decrypt(
             ciphertext,
             KEY2,
@@ -604,15 +830,28 @@ def decrypt_other(raw):
 
         result = decrypted.decode("utf-8").strip()
 
+        print(
+            "DEBUG fallback plaintext prefix:",
+            repr(result[:300])
+        )
+
         if not result:
             raise ValueError(
                 "Fallback AES produced an empty result"
             )
 
+        print("===== FALLBACK FORMAT SUCCEEDED =====\n")
+
         return result
 
     except Exception as e:
         fallback_error = e
+
+        print(
+            "DEBUG fallback format FAILED:",
+            type(e).__name__,
+            e
+        )
 
     # ============================================================
     # BOTH FAILED
@@ -624,7 +863,7 @@ def decrypt_other(raw):
         f"{type(primary_error).__name__}: {primary_error}; "
         f"fallback format failed with "
         f"{type(fallback_error).__name__}: {fallback_error}"
-  )
+    )
 
 def fetch_and_decrypt(api_url, path, decryptor):
     raw = http_get(api_url + path).decode('utf-8').strip()
