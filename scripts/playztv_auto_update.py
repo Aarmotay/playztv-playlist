@@ -299,10 +299,10 @@ def decrypt_other(raw):
                 e
             )
           # After substitution + FIRST Base64 decode:
-          print("decoded bytes:", len(decoded))
-          print("block aligned:", len(decoded) % 16 == 0)
-          print("first 64 hex:", decoded[:64].hex())
-          print("first 64 raw:", decoded[:64])
+            print("decoded bytes:", len(decoded))
+            print("block aligned:", len(decoded) % 16 == 0)
+            print("first 64 hex:", decoded[:64].hex())
+            print("first 64 raw:", decoded[:64])
 
 ascii_count = sum(
     32 <= b <= 126 or b in (9, 10, 13)
